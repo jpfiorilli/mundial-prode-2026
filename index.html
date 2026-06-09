@@ -210,30 +210,7 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 <body>
 
 
-<!-- SETUP MODAL — shown when no Sheet URL configured -->
-<div class="modal-overlay" id="setup-overlay">
-  <div class="modal" id="setup-modal">
-    <div class="modal-title">⚙ Configurar</div>
-    <div class="modal-sub" style="margin-bottom:16px">
-      Pegá la URL de tu Google Apps Script para activar el modo multijugador compartido.
-      <br><br>
-      <span style="color:var(--teal);font-size:11px">¿No tenés la URL? Pedísela al organizador del prode.</span>
-    </div>
-    <input class="modal-input" id="sheet-url-input" type="url"
-      placeholder="https://script.google.com/macros/s/..."
-      style="width:100%;margin-bottom:12px"
-      onkeydown="if(event.key==='Enter')applySheetURL()"/>
-    <button class="btn btn-teal" onclick="applySheetURL()" style="width:100%">Conectar</button>
-    <div id="setup-error" style="font-size:11px;color:var(--coral);margin-top:8px;display:none"></div>
-    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
-      <div style="font-size:10px;color:var(--muted);line-height:1.6">
-        ¿Sos el organizador? Seguí las instrucciones en el README del repo para crear tu Google Sheet.
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- SYNC BADGE -->
+<!-- PLAYER MODAL -->
 <div id="sync-badge" style="display:none;position:fixed;bottom:84px;right:14px;
   background:var(--surface);border:1px solid var(--border);border-radius:20px;
   padding:4px 10px;font-family:var(--fh);font-size:11px;letter-spacing:.08em;
@@ -457,7 +434,7 @@ const FIXTURES = [
    BACKEND — Google Sheets via Apps Script
    Set SHEET_URL to your deployed Web App URL
    ═══════════════════════════════════════ */
-const SHEET_URL = localStorage.getItem('prode_sheet_url') || '';
+const SHEET_URL = 'https://script.google.com/macros/s/AKfycbxNnpwyAYhDXRfIpJxJtibvXijq_rnb-grsrwLkR0AWzhaUI4pC4oev4WLBc-CbPR97VA/exec';
 
 /* Local cache — synced from/to Google Sheets */
 let players   = [];
@@ -511,11 +488,7 @@ async function saveResultToSheet(fid, rh, ra) {
   await sheetAPI('saveResult', {matchId:fid, rh, ra});
 }
 
-/* ── Sheet URL config ── */
-function setSheetURL(url) {
-  localStorage.setItem('prode_sheet_url', url);
-  location.reload();
-}
+/* ── Sheet URL is hardcoded — no runtime config needed ── */
 
 function showSyncBadge(on) {
   const el = document.getElementById('sync-badge');
@@ -947,43 +920,18 @@ function renderAll(){
   updatePill();
 }
 
-/* Check if sheet URL is configured */
-if(!SHEET_URL){
-  // Show setup screen
-  document.addEventListener('DOMContentLoaded',()=>{
-    showSetupModal();
-  });
-} else {
-  syncFromSheet().then(()=>{
-    updatePill();
-    fetchESPNResults();  // pull live results immediately
-    if(!curPlayer) openModal();
-  });
-  setInterval(syncFromSheet, 30000);     // sync predictions/players every 30s
-  setInterval(fetchESPNResults, 30000);  // pull ESPN results every 30s
-  setInterval(tickLockCountdowns, 1000); // countdown ticks every second
-}
+/* URL is hardcoded — always sync on load */
+syncFromSheet().then(()=>{
+  updatePill();
+  fetchESPNResults();
+  if(!curPlayer) openModal();
+});
+setInterval(syncFromSheet, 30000);
+setInterval(fetchESPNResults, 30000);
+setInterval(tickLockCountdowns, 1000);
 
 updatePill();
 renderGrupos();
-if(!curPlayer && SHEET_URL) setTimeout(()=>{ if(!curPlayer) openModal(); }, 500);
-
-function showSetupModal(){
-  document.getElementById('setup-overlay').classList.add('show');
-}
-
-function applySheetURL(){
-  const url = document.getElementById('sheet-url-input').value.trim();
-  const errEl = document.getElementById('setup-error');
-  errEl.style.display='none';
-  if(!url || !url.startsWith('https://script.google.com')){
-    errEl.textContent='Ingresá una URL válida de Google Apps Script.';
-    errEl.style.display='block';
-    return;
-  }
-  setSheetURL(url);
-}
-
 
 function tickLockCountdowns(){
   document.querySelectorAll('[data-lock-utc]').forEach(el=>{
