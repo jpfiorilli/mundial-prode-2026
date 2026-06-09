@@ -193,6 +193,10 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 .progress-bar{height:3px;background:var(--border);border-radius:2px;margin:4px 0 2px}
 .progress-fill{height:100%;border-radius:2px;background:var(--teal);transition:width .4s ease}
 
+/* ── LOCK COUNTDOWN ── */
+@keyframes lockPulse{0%,100%{opacity:1}50%{opacity:.5}}
+.lock-soon{animation:lockPulse 1s ease-in-out infinite}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar{width:3px}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
@@ -545,13 +549,94 @@ function playerTotal(pid){
 }
 
 /* ═══════════════════════════════════════
-   TIMEZONE
+   TIMEZONE + LOCK HELPERS
    ═══════════════════════════════════════ */
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Argentina/Buenos_Aires';
 function fmtDate(u){return new Intl.DateTimeFormat('es-AR',{timeZone:TZ,day:'numeric',month:'short'}).format(new Date(u))}
 function fmtTime(u){return new Intl.DateTimeFormat('es-AR',{timeZone:TZ,hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(u))}
 function isPast(u){return new Date(u)<new Date()}
 function fl(t){return FLAGS[t]||'🏳️'}
+
+/* Predictions lock 2 hours before kick-off */
+const LOCK_MS = 2 * 60 * 60 * 1000;
+function isLocked(utcStr){ return new Date(utcStr) - new Date() < LOCK_MS; }
+function msToLock(utcStr){ return new Date(utcStr) - new Date() - LOCK_MS; }
+function lockCountdown(utcStr){
+  const ms = msToLock(utcStr);
+  if(ms <= 0) return null;
+  const h = Math.floor(ms/3600000);
+  const m = Math.floor((ms%3600000)/60000);
+  const s = Math.floor((ms%60000)/1000);
+  if(h>0) return `${h}h ${m}m`;
+  if(m>0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+/* ═══════════════════════════════════════
+   ESPN LIVE RESULTS
+   ═══════════════════════════════════════ */
+const TEAM_NORM_P={
+  'USA':'Estados Unidos','United States':'Estados Unidos','USMNT':'Estados Unidos',
+  'Bosnia & Herzegovina':'Bosnia-Herzegovina','Bosnia and Herzegovina':'Bosnia-Herzegovina',
+  'Korea Republic':'Corea del Sur','Republic of Korea':'Corea del Sur',
+  "Côte d'Ivoire":'Costa de Marfil',"Cote d'Ivoire":'Costa de Marfil',
+  'IR Iran':'Irán','Czech Republic':'República Checa','Czechia':'República Checa',
+  'Türkiye':'Turquía','Turkey':'Turquía','Saudi Arabia':'Arabia Saudita',
+  'New Zealand':'Nueva Zelanda','Netherlands':'Países Bajos','Morocco':'Marruecos',
+  'Brazil':'Brasil','Germany':'Alemania','France':'Francia','Spain':'España',
+  'Belgium':'Bélgica','Portugal':'Portugal','Argentina':'Argentina',
+  'Norway':'Noruega','Sweden':'Suecia','Japan':'Japón','Tunisia':'Túnez',
+  'Algeria':'Argelia','Austria':'Austria','Croatia':'Croacia',
+  'England':'Inglaterra','Scotland':'Escocia','Haiti':'Haití',
+  'Jordan':'Jordania','Panama':'Panamá','Ghana':'Ghana','Senegal':'Senegal',
+  'Ecuador':'Ecuador','Uruguay':'Uruguay','Paraguay':'Paraguay',
+  'Australia':'Australia','Colombia':'Colombia','Mexico':'México',
+  'DR Congo':'Congo DR','Cape Verde':'Cabo Verde','Iraq':'Iraq',
+  'Uzbekistan':'Uzbekistán','Curacao':'Curaçao','Ivory Coast':'Costa de Marfil',
+  'South Africa':'Sudáfrica','South Korea':'Corea del Sur','Serbia':'Serbia'
+};
+function normP(n){ return TEAM_NORM_P[n]||n; }
+
+async function fetchESPNResults(){
+  const now = new Date();
+  const tournStart = new Date('2026-06-11T00:00:00Z');
+  const tournEnd   = new Date('2026-07-20T23:59:00Z');
+  if(now < tournStart || now > tournEnd) return;
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.worldcup/scoreboard`;
+    const res = await fetch(url);
+    if(!res.ok) return;
+    const json = await res.json();
+    let changed = false;
+    for(const ev of (json.events||[])){
+      const c = ev.competitions?.[0]; if(!c) continue;
+      const comps = c.competitors||[];
+      const hc = comps.find(x=>x.homeAway==='home')||comps[0];
+      const ac = comps.find(x=>x.homeAway==='away')||comps[1];
+      if(!hc||!ac) continue;
+      const st = c.status?.type?.name||'';
+      const isFinal = st.includes('FINAL')||st.includes('FULL')||st.includes('FT');
+      const isLive  = st.includes('IN_PROGRESS');
+      if(!isFinal && !isLive) continue;
+      const hn = normP(hc.team?.displayName||hc.team?.name||'');
+      const an = normP(ac.team?.displayName||ac.team?.name||'');
+      const hs = parseInt(hc.score||'0')||0;
+      const as_ = parseInt(ac.score||'0')||0;
+      const fix = FIXTURES.find(f=>(f.h===hn&&f.a===an)||(f.h===an&&f.a===hn));
+      if(!fix) continue;
+      const sw = fix.h===an;
+      const rh = sw?as_:hs, ra = sw?hs:as_;
+      const cur = results[fix.id];
+      if(!cur || cur.rh!==rh || cur.ra!==ra){
+        results[fix.id]={rh,ra};
+        changed = true;
+        // Persist to Sheet silently
+        saveResultToSheet(fix.id, rh, ra);
+      }
+    }
+    if(changed){ renderGrupos(); renderTabla(); updatePill(); }
+  } catch(e){ /* silent */ }
+}
 
 /* ═══════════════════════════════════════
    RENDER — GRUPOS
@@ -564,20 +649,72 @@ function renderGrupos(){
     h+=`<div class="group-block">
       <div class="group-title">${g.name} <span>${done}/${gfixes.length} resultados</span></div>`;
     gfixes.forEach(f=>{
-      const past=isPast(f.utc);
-      const r=results[f.id]||{};
-      const pp=curPlayer?(preds[curPlayer]||{})[f.id]||{}:{};
-      const pts=curPlayer&&r.rh!==undefined?calcPts(pp.ph,pp.pa,r.rh,r.ra):null;
-      const hasResult=r.rh!==undefined&&r.ra!==undefined;
-      const hasPred=pp.ph!==undefined&&pp.pa!==undefined;
+      const locked  = isLocked(f.utc);   // 2h before kick-off
+      const past    = isPast(f.utc);
+      const r       = results[f.id]||{};
+      const pp      = curPlayer?(preds[curPlayer]||{})[f.id]||{}:{};
+      const pts     = curPlayer&&r.rh!==undefined?calcPts(pp.ph,pp.pa,r.rh,r.ra):null;
+      const hasResult = r.rh!==undefined&&r.ra!==undefined;
+      const hasPred   = pp.ph!==undefined&&pp.pa!==undefined;
+      const predLocked = locked || pts !== null;  // locked by time OR result exists
+      const cdLock = (!locked && !past) ? lockCountdown(f.utc) : null;
 
       let ptsHtml='';
       if(curPlayer){
         if(pts===3) ptsHtml=`<span class="pts-badge p3">+3 exacto 🎯</span>`;
         else if(pts===1) ptsHtml=`<span class="pts-badge p1">+1 ganador</span>`;
         else if(pts===0) ptsHtml=`<span class="pts-badge p0">0 pts</span>`;
+        else if(hasPred&&!hasResult&&locked) ptsHtml=`<span class="pts-badge pending">🔒 Cerrado</span>`;
         else if(hasPred&&!hasResult) ptsHtml=`<span class="pts-badge pending">Pendiente</span>`;
       }
+
+      /* Lock warning — shows countdown to close */
+      let lockWarning='';
+      if(!predLocked && cdLock && !hasPred){
+        lockWarning=`<div style="font-size:10px;color:var(--gold);font-family:var(--fh);
+          letter-spacing:.06em;margin-bottom:5px">
+          ⏱ Cierra en ${cdLock}
+        </div>`;
+      } else if(!predLocked && cdLock && hasPred){
+        lockWarning=`<div style="font-size:10px;color:var(--muted);font-family:var(--fh);
+          letter-spacing:.06em;margin-bottom:5px">
+          ✏️ Podés editar por ${cdLock}
+        </div>`;
+      } else if(locked && !past && !hasResult){
+        lockWarning=`<div style="font-size:10px;color:var(--coral);font-family:var(--fh);
+          letter-spacing:.06em;margin-bottom:5px">
+          🔒 Predicciones cerradas
+        </div>`;
+      }
+
+      /* Result display — auto from ESPN (read-only) or manual input */
+      const resultSection = hasResult
+        ? `<div>
+            <div class="score-label" style="color:var(--teal)">Resultado ${past?'final':'en vivo'}</div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <div class="score-input result" style="display:flex;align-items:center;justify-content:center;
+                cursor:default;font-size:22px">${r.rh}</div>
+              <span class="score-sep">–</span>
+              <div class="score-input result" style="display:flex;align-items:center;justify-content:center;
+                cursor:default;font-size:22px">${r.ra}</div>
+            </div>
+            <div style="font-size:9px;color:var(--teal);margin-top:3px;font-family:var(--fh);letter-spacing:.06em">
+              Via ESPN ${past?'· Final':'· En vivo'}
+            </div>
+          </div>`
+        : `<div>
+            <div class="score-label" style="color:var(--muted)">Resultado real</div>
+            <div style="display:flex;align-items:center;gap:4px">
+              <div class="score-input" style="display:flex;align-items:center;justify-content:center;
+                cursor:default;opacity:.3;font-size:14px">–</div>
+              <span class="score-sep">–</span>
+              <div class="score-input" style="display:flex;align-items:center;justify-content:center;
+                cursor:default;opacity:.3;font-size:14px">–</div>
+            </div>
+            <div style="font-size:9px;color:var(--muted);margin-top:3px;font-family:var(--fh);letter-spacing:.06em">
+              Auto · ESPN live
+            </div>
+          </div>`;
 
       h+=`<div class="match-row">
         <div class="match-meta">
@@ -595,39 +732,29 @@ function renderGrupos(){
             <span class="match-team right">${f.a} ${fl(f.a)}</span>
           </div>
         </div>
+        ${lockWarning}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <!-- PREDICCIÓN -->
           <div>
-            <div class="score-label">Tu predicción</div>
+            <div class="score-label">${predLocked?'🔒 Tu predicción':'Tu predicción'}</div>
             <div style="display:flex;align-items:center;gap:4px">
-              <input class="score-input${past?' locked':''}" type="number" min="0" max="99"
+              <input class="score-input${predLocked?' locked':''}" type="number" min="0" max="99"
                 id="ph-${f.id}" value="${pp.ph!==undefined?pp.ph:''}"
-                placeholder="-" ${past&&!hasPred?'disabled':''} ${pts!==null?'disabled':''}
+                placeholder="-" ${predLocked?'disabled':''}
                 oninput="onPredInput(${f.id})"/>
               <span class="score-sep">–</span>
-              <input class="score-input${past?' locked':''}" type="number" min="0" max="99"
+              <input class="score-input${predLocked?' locked':''}" type="number" min="0" max="99"
                 id="pa-${f.id}" value="${pp.pa!==undefined?pp.pa:''}"
-                placeholder="-" ${past&&!hasPred?'disabled':''} ${pts!==null?'disabled':''}
+                placeholder="-" ${predLocked?'disabled':''}
                 oninput="onPredInput(${f.id})"/>
             </div>
           </div>
-          <!-- RESULTADO REAL -->
-          <div>
-            <div class="score-label" style="color:var(--teal)">Resultado real</div>
-            <div style="display:flex;align-items:center;gap:4px">
-              <input class="score-input result" type="number" min="0" max="99"
-                id="rh-${f.id}" value="${r.rh!==undefined?r.rh:''}"
-                placeholder="-" oninput="onResultInput(${f.id})"/>
-              <span class="score-sep">–</span>
-              <input class="score-input result" type="number" min="0" max="99"
-                id="ra-${f.id}" value="${r.ra!==undefined?r.ra:''}"
-                placeholder="-" oninput="onResultInput(${f.id})"/>
-            </div>
-          </div>
+          <!-- RESULTADO REAL — auto from ESPN -->
+          ${resultSection}
         </div>
         <div class="match-footer">
           ${ptsHtml}
-          ${curPlayer&&pts===null?`<button class="save-btn" id="savebtn-${f.id}" onclick="savePred(${f.id})" ${hasPred?'':'disabled'}>Guardar</button>`:'<span></span>'}
+          ${curPlayer&&!predLocked?`<button class="save-btn" id="savebtn-${f.id}" onclick="savePred(${f.id})" ${hasPred||pp.ph!==undefined?'':'disabled'}>${hasPred?'Actualizar':'Guardar'}</button>`:'<span></span>'}
         </div>
       </div>`;
     });
@@ -699,14 +826,8 @@ async function savePred(fid){
   renderGrupos();
 }
 
-function onResultInput(fid){
-  const rh=document.getElementById(`rh-${fid}`)?.value;
-  const ra=document.getElementById(`ra-${fid}`)?.value;
-  if(rh!==''&&ra!==''){
-    saveResultToSheet(fid, +rh, +ra);
-    updatePill();
-  }
-}
+/* Results are auto-populated from ESPN — no manual input needed */
+function onResultInput(fid){ /* disabled */ }
 
 /* ═══════════════════════════════════════
    PLAYER MANAGEMENT
@@ -835,10 +956,12 @@ if(!SHEET_URL){
 } else {
   syncFromSheet().then(()=>{
     updatePill();
+    fetchESPNResults();  // pull live results immediately
     if(!curPlayer) openModal();
   });
-  // Auto-sync every 30s
-  setInterval(syncFromSheet, 30000);
+  setInterval(syncFromSheet, 30000);     // sync predictions/players every 30s
+  setInterval(fetchESPNResults, 30000);  // pull ESPN results every 30s
+  setInterval(tickLockCountdowns, 1000); // countdown ticks every second
 }
 
 updatePill();
@@ -859,6 +982,15 @@ function applySheetURL(){
     return;
   }
   setSheetURL(url);
+}
+
+
+function tickLockCountdowns(){
+  document.querySelectorAll('[data-lock-utc]').forEach(el=>{
+    const utc = el.dataset.lockUtc;
+    const cd  = lockCountdown(utc);
+    if(cd) el.textContent = el.dataset.lockMsg.replace('{t}', cd);
+  });
 }
 
 </script>
