@@ -205,6 +205,40 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 </head>
 <body>
 
+
+<!-- SETUP MODAL — shown when no Sheet URL configured -->
+<div class="modal-overlay" id="setup-overlay">
+  <div class="modal" id="setup-modal">
+    <div class="modal-title">⚙ Configurar</div>
+    <div class="modal-sub" style="margin-bottom:16px">
+      Pegá la URL de tu Google Apps Script para activar el modo multijugador compartido.
+      <br><br>
+      <span style="color:var(--teal);font-size:11px">¿No tenés la URL? Pedísela al organizador del prode.</span>
+    </div>
+    <input class="modal-input" id="sheet-url-input" type="url"
+      placeholder="https://script.google.com/macros/s/..."
+      style="width:100%;margin-bottom:12px"
+      onkeydown="if(event.key==='Enter')applySheetURL()"/>
+    <button class="btn btn-teal" onclick="applySheetURL()" style="width:100%">Conectar</button>
+    <div id="setup-error" style="font-size:11px;color:var(--coral);margin-top:8px;display:none"></div>
+    <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+      <div style="font-size:10px;color:var(--muted);line-height:1.6">
+        ¿Sos el organizador? Seguí las instrucciones en el README del repo para crear tu Google Sheet.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SYNC BADGE -->
+<div id="sync-badge" style="display:none;position:fixed;bottom:84px;right:14px;
+  background:var(--surface);border:1px solid var(--border);border-radius:20px;
+  padding:4px 10px;font-family:var(--fh);font-size:11px;letter-spacing:.08em;
+  color:var(--teal);z-index:50;align-items:center;gap:6px">
+  <div class="live-dot" style="width:6px;height:6px;border-radius:50%;background:var(--teal);animation:blink 1s infinite"></div>
+  Sincronizando…
+</div>
+
+
 <!-- PLAYER MODAL -->
 <div class="modal-overlay" id="modal-overlay" onclick="handleOverlayClick(event)">
   <div class="modal" id="modal">
@@ -416,23 +450,73 @@ const FIXTURES = [
 ];
 
 /* ═══════════════════════════════════════
-   STORAGE  — shape:
-   prode_players: [{id,name}]
-   prode_preds:   {playerId: {matchId: {ph,pa}}}
-   prode_results: {matchId: {rh,ra}}
+   BACKEND — Google Sheets via Apps Script
+   Set SHEET_URL to your deployed Web App URL
    ═══════════════════════════════════════ */
-const KEY_PLAYERS = 'prode_players';
-const KEY_PREDS   = 'prode_preds';
-const KEY_RESULTS = 'prode_results';
-const KEY_CUR     = 'prode_current';
+const SHEET_URL = localStorage.getItem('prode_sheet_url') || '';
 
-function load(k){ try{return JSON.parse(localStorage.getItem(k)||'null')}catch(e){return null} }
-function save(k,v){ try{localStorage.setItem(k,JSON.stringify(v))}catch(e){} }
+/* Local cache — synced from/to Google Sheets */
+let players   = [];
+let preds     = {};   // {playerId: {matchId: {ph,pa}}}
+let results   = {};   // {matchId: {rh,ra}}
+let curPlayer = localStorage.getItem('prode_current') || null;
+let syncing   = false;
 
-let players  = load(KEY_PLAYERS) || [];
-let preds    = load(KEY_PREDS)   || {};
-let results  = load(KEY_RESULTS) || {};
-let curPlayer= load(KEY_CUR)     || null;
+/* ── Low-level API call ── */
+async function sheetAPI(action, payload={}) {
+  if(!SHEET_URL) return null;
+  try {
+    const body = JSON.stringify({action, ...payload});
+    const res  = await fetch(SHEET_URL, {
+      method:'POST', body,
+      headers:{'Content-Type':'text/plain'} // Apps Script needs text/plain for CORS
+    });
+    return await res.json();
+  } catch(e) {
+    console.warn('Sheet API error:', e.message);
+    return null;
+  }
+}
+
+/* ── Sync: pull everything from Sheets → local cache ── */
+async function syncFromSheet() {
+  if(!SHEET_URL) return;
+  showSyncBadge(true);
+  const data = await sheetAPI('getAll');
+  if(!data) { showSyncBadge(false); return; }
+  if(data.players)  players = data.players;
+  if(data.preds)    preds   = data.preds;
+  if(data.results)  results = data.results;
+  showSyncBadge(false);
+  renderAll();
+}
+
+/* ── Write helpers ── */
+async function savePlayer(p) {
+  players = players.filter(x=>x.id!==p.id);
+  players.push(p);
+  await sheetAPI('savePlayer', {player: p});
+}
+async function savePredToSheet(pid, fid, ph, pa) {
+  if(!preds[pid]) preds[pid]={};
+  preds[pid][fid]={ph,pa};
+  await sheetAPI('savePred', {playerId:pid, matchId:fid, ph, pa});
+}
+async function saveResultToSheet(fid, rh, ra) {
+  results[fid]={rh,ra};
+  await sheetAPI('saveResult', {matchId:fid, rh, ra});
+}
+
+/* ── Sheet URL config ── */
+function setSheetURL(url) {
+  localStorage.setItem('prode_sheet_url', url);
+  location.reload();
+}
+
+function showSyncBadge(on) {
+  const el = document.getElementById('sync-badge');
+  if(el) el.style.display = on ? 'flex' : 'none';
+}
 
 /* ═══════════════════════════════════════
    SCORING
@@ -603,24 +687,23 @@ function onPredInput(fid){
   btn.disabled = ph===''||pa===''||!curPlayer;
 }
 
-function savePred(fid){
+async function savePred(fid){
   if(!curPlayer) return openModal();
   const ph=document.getElementById(`ph-${fid}`)?.value;
   const pa=document.getElementById(`pa-${fid}`)?.value;
   if(ph===''||pa==='') return;
-  if(!preds[curPlayer]) preds[curPlayer]={};
-  preds[curPlayer][fid]={ph:+ph,pa:+pa};
-  save(KEY_PREDS,preds);
+  const btn=document.getElementById(`savebtn-${fid}`);
+  if(btn){btn.textContent='...';btn.disabled=true;}
+  await savePredToSheet(curPlayer, fid, +ph, +pa);
   updatePill();
-  renderGrupos(); // re-render to show badge
+  renderGrupos();
 }
 
 function onResultInput(fid){
   const rh=document.getElementById(`rh-${fid}`)?.value;
   const ra=document.getElementById(`ra-${fid}`)?.value;
   if(rh!==''&&ra!==''){
-    results[fid]={rh:+rh,ra:+ra};
-    save(KEY_RESULTS,results);
+    saveResultToSheet(fid, +rh, +ra);
     updatePill();
   }
 }
@@ -669,14 +752,14 @@ function renderPlayerList(){
 
 function selectPlayer(pid){
   curPlayer=pid;
-  save(KEY_CUR,pid);
+  localStorage.setItem('prode_current',pid);
   closeModal();
   updatePill();
   renderGrupos();
   if(document.getElementById('page-tabla').classList.contains('active')) renderTabla();
 }
 
-function addPlayer(){
+async function addPlayer(){
   const name  = document.getElementById('new-player-name').value.trim();
   const email = document.getElementById('new-player-email').value.trim().toLowerCase();
   const errEl = document.getElementById('form-error');
@@ -701,8 +784,8 @@ function addPlayer(){
     return;
   }
   const id='p'+Date.now();
-  players.push({id, name, email});
-  save(KEY_PLAYERS, players);
+  const p={id, name, email};
+  await savePlayer(p);
   selectPlayer(id);
 }
 
@@ -735,9 +818,49 @@ function switchPage(name,btn){
 /* ═══════════════════════════════════════
    INIT
    ═══════════════════════════════════════ */
+function renderAll(){
+  const p=document.querySelector('.page.active');
+  const name=p?p.id.replace('page-',''):'grupos';
+  if(name==='grupos') renderGrupos();
+  else if(name==='tabla') renderTabla();
+  updatePill();
+}
+
+/* Check if sheet URL is configured */
+if(!SHEET_URL){
+  // Show setup screen
+  document.addEventListener('DOMContentLoaded',()=>{
+    showSetupModal();
+  });
+} else {
+  syncFromSheet().then(()=>{
+    updatePill();
+    if(!curPlayer) openModal();
+  });
+  // Auto-sync every 30s
+  setInterval(syncFromSheet, 30000);
+}
+
 updatePill();
 renderGrupos();
-if(!curPlayer) openModal();
+if(!curPlayer && SHEET_URL) setTimeout(()=>{ if(!curPlayer) openModal(); }, 500);
+
+function showSetupModal(){
+  document.getElementById('setup-overlay').classList.add('show');
+}
+
+function applySheetURL(){
+  const url = document.getElementById('sheet-url-input').value.trim();
+  const errEl = document.getElementById('setup-error');
+  errEl.style.display='none';
+  if(!url || !url.startsWith('https://script.google.com')){
+    errEl.textContent='Ingresá una URL válida de Google Apps Script.';
+    errEl.style.display='block';
+    return;
+  }
+  setSheetURL(url);
+}
+
 </script>
 </body>
 </html>
