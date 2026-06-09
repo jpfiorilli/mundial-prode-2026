@@ -209,12 +209,21 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 <div class="modal-overlay" id="modal-overlay" onclick="handleOverlayClick(event)">
   <div class="modal" id="modal">
     <div class="modal-title">¿Quién sos?</div>
-    <div class="modal-sub">Elegí tu nombre o creá uno nuevo para guardar tus predicciones.</div>
+    <div class="modal-sub" id="modal-sub">Elegí tu perfil o registrate con nombre y email.</div>
     <div class="player-list" id="player-list"></div>
-    <div class="modal-input-row">
-      <input class="modal-input" id="new-player-input" type="text" maxlength="20"
-        placeholder="Tu nombre..." onkeydown="if(event.key==='Enter')addPlayer()"/>
-      <button class="btn btn-teal" onclick="addPlayer()">Entrar</button>
+    <!-- New player form -->
+    <div id="new-player-form">
+      <div style="font-family:var(--fh);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--teal);margin-bottom:8px">Nuevo jugador</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:10px">
+        <input class="modal-input" id="new-player-name" type="text" maxlength="20"
+          placeholder="Tu nombre..." autocomplete="name"
+          onkeydown="if(event.key==='Enter')document.getElementById('new-player-email').focus()"/>
+        <input class="modal-input" id="new-player-email" type="email" maxlength="80"
+          placeholder="Tu email..." autocomplete="email"
+          onkeydown="if(event.key==='Enter')addPlayer()"/>
+        <div id="form-error" style="font-size:11px;color:var(--coral);display:none"></div>
+      </div>
+      <button class="btn btn-teal" onclick="addPlayer()" style="width:100%">Registrarme y entrar</button>
     </div>
     <div style="text-align:right;margin-top:8px">
       <button class="btn btn-ghost" onclick="closeModal()" id="modal-cancel" style="display:none">Cancelar</button>
@@ -492,9 +501,15 @@ function renderGrupos(){
           <span class="match-meta-venue">${f.v}</span>
         </div>
         <div class="match-teams">
-          <span class="match-team">${fl(f.h)} ${f.h}</span>
+          <div style="flex:1">
+            <div style="font-size:9px;color:var(--teal);font-family:var(--fh);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px">Local</div>
+            <span class="match-team">${fl(f.h)} ${f.h}</span>
+          </div>
           <span class="match-vs">vs</span>
-          <span class="match-team right">${f.a} ${fl(f.a)}</span>
+          <div style="flex:1;text-align:right">
+            <div style="font-size:9px;color:var(--coral);font-family:var(--fh);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px">Visitante</div>
+            <span class="match-team right">${f.a} ${fl(f.a)}</span>
+          </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <!-- PREDICCIÓN -->
@@ -556,11 +571,14 @@ function renderTabla(){
     const rankClass=i===0?'gold':i===1?'silver':i===2?'bronze':'';
     const isMe=p.id===curPlayer;
     const pct=played?Math.round(p.played/played*100):0;
+    const emailMask = p.email
+      ? p.email.replace(/^(.{2})(.*)(@.*)$/,(_,a,b,c)=>a+'***'+c)
+      : '';
     h+=`<div class="lb-row${isMe?' me':''}">
       <div class="lb-rank ${rankClass}">${i+1}</div>
       <div class="lb-info">
         <div class="lb-name">${p.name}${isMe?' 👈':''}</div>
-        <div class="lb-detail">${p.played} predicciones · ${p.exact} exactas</div>
+        <div class="lb-detail">${emailMask} · ${p.played} predicciones · ${p.exact} exactas</div>
         <div class="progress-bar" style="margin-top:5px">
           <div class="progress-fill" style="width:${pct}%"></div>
         </div>
@@ -612,9 +630,17 @@ function onResultInput(fid){
    ═══════════════════════════════════════ */
 function openModal(){
   renderPlayerList();
+  const hasPlayers = players.length>0;
+  document.getElementById('modal-sub').textContent = hasPlayers
+    ? 'Elegí tu perfil o registrate con nombre y email.'
+    : 'Registrate con tu nombre y email para guardar tus predicciones.';
   document.getElementById('modal-cancel').style.display=curPlayer?'':'none';
   document.getElementById('modal-overlay').classList.add('show');
-  setTimeout(()=>document.getElementById('new-player-input').focus(),100);
+  // Clear form
+  document.getElementById('new-player-name').value='';
+  document.getElementById('new-player-email').value='';
+  document.getElementById('form-error').style.display='none';
+  setTimeout(()=>document.getElementById('new-player-name').focus(),100);
 }
 function closeModal(){document.getElementById('modal-overlay').classList.remove('show')}
 function handleOverlayClick(e){if(e.target.id==='modal-overlay'&&curPlayer) closeModal()}
@@ -622,13 +648,20 @@ function handleOverlayClick(e){if(e.target.id==='modal-overlay'&&curPlayer) clos
 function renderPlayerList(){
   const el=document.getElementById('player-list');
   if(!players.length){
-    el.innerHTML=`<div style="font-size:12px;color:var(--muted);padding:4px 0">Sé el primero en entrar.</div>`;
+    el.innerHTML='';
     return;
   }
   el.innerHTML=players.map(p=>{
     const {total}=playerTotal(p.id);
+    // Mask email for privacy: show first 2 chars + *** + @domain
+    const emailMask = p.email
+      ? p.email.replace(/^(.{2})(.*)(@.*)$/,(_,a,b,c)=>a+'***'+c)
+      : '';
     return `<div class="player-item${p.id===curPlayer?' active':''}" onclick="selectPlayer('${p.id}')">
-      <span class="player-item-name">${p.name}</span>
+      <div>
+        <div class="player-item-name">${p.name}</div>
+        <div style="font-size:10px;color:var(--muted);margin-top:1px">${emailMask}</div>
+      </div>
       <span class="player-item-pts">${total} pts</span>
     </div>`;
   }).join('');
@@ -644,16 +677,32 @@ function selectPlayer(pid){
 }
 
 function addPlayer(){
-  const name=document.getElementById('new-player-input').value.trim();
-  if(!name) return;
-  if(players.find(p=>p.name.toLowerCase()===name.toLowerCase())){
-    const existing=players.find(p=>p.name.toLowerCase()===name.toLowerCase());
+  const name  = document.getElementById('new-player-name').value.trim();
+  const email = document.getElementById('new-player-email').value.trim().toLowerCase();
+  const errEl = document.getElementById('form-error');
+  errEl.style.display='none';
+
+  if(!name){
+    errEl.textContent='Por favor ingresá tu nombre.';
+    errEl.style.display='block';
+    document.getElementById('new-player-name').focus();
+    return;
+  }
+  if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    errEl.textContent='Por favor ingresá un email válido.';
+    errEl.style.display='block';
+    document.getElementById('new-player-email').focus();
+    return;
+  }
+  // Check if email already registered → just log them in
+  const existing = players.find(p=>p.email===email);
+  if(existing){
     selectPlayer(existing.id);
     return;
   }
   const id='p'+Date.now();
-  players.push({id,name});
-  save(KEY_PLAYERS,players);
+  players.push({id, name, email});
+  save(KEY_PLAYERS, players);
   selectPlayer(id);
 }
 
