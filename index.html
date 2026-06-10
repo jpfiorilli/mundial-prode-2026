@@ -809,11 +809,10 @@ function openModal(){
   renderPlayerList();
   const hasPlayers = players.length>0;
   document.getElementById('modal-sub').textContent = hasPlayers
-    ? 'Elegí tu perfil o registrate con nombre y email.'
+    ? 'Elegí tu perfil o ingresá tu email para reconectarte desde un nuevo dispositivo.'
     : 'Registrate con tu nombre y email para guardar tus predicciones.';
   document.getElementById('modal-cancel').style.display=curPlayer?'':'none';
   document.getElementById('modal-overlay').classList.add('show');
-  // Clear form
   document.getElementById('new-player-name').value='';
   document.getElementById('new-player-email').value='';
   document.getElementById('form-error').style.display='none';
@@ -859,24 +858,28 @@ async function addPlayer(){
   const errEl = document.getElementById('form-error');
   errEl.style.display='none';
 
-  if(!name){
-    errEl.textContent='Por favor ingresá tu nombre.';
-    errEl.style.display='block';
-    document.getElementById('new-player-name').focus();
-    return;
-  }
   if(!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
     errEl.textContent='Por favor ingresá un email válido.';
     errEl.style.display='block';
     document.getElementById('new-player-email').focus();
     return;
   }
-  // Check if email already registered → just log them in
+
+  /* Email already registered → reconnect silently (works from any device) */
   const existing = players.find(p=>p.email===email);
   if(existing){
     selectPlayer(existing.id);
     return;
   }
+
+  /* New player — name is required */
+  if(!name){
+    errEl.textContent='Nombre requerido para registrarte por primera vez.';
+    errEl.style.display='block';
+    document.getElementById('new-player-name').focus();
+    return;
+  }
+
   const id='p'+Date.now();
   const p={id, name, email};
   await savePlayer(p);
@@ -924,7 +927,7 @@ function renderAll(){
 syncFromSheet().then(()=>{
   updatePill();
   fetchESPNResults();
-  if(!curPlayer) openModal();
+  restoreSession();
 });
 setInterval(syncFromSheet, 30000);
 setInterval(fetchESPNResults, 30000);
@@ -932,6 +935,28 @@ setInterval(tickLockCountdowns, 1000);
 
 updatePill();
 renderGrupos();
+
+/* ── Session restore ──
+   Same device: curPlayer ID is in localStorage → match against loaded players list
+   New device:  no curPlayer → show modal so they enter email to reconnect
+*/
+function restoreSession(){
+  if(curPlayer){
+    const found = players.find(p=>p.id===curPlayer);
+    if(found){
+      /* Known user on same device — restore silently */
+      updatePill();
+      renderGrupos();
+      return;
+    } else {
+      /* ID in localStorage but not in Sheet (e.g. cleared Sheet) — reset */
+      curPlayer = null;
+      localStorage.removeItem('prode_current');
+    }
+  }
+  /* No session — show login modal */
+  openModal();
+}
 
 function tickLockCountdowns(){
   document.querySelectorAll('[data-lock-utc]').forEach(el=>{
