@@ -466,11 +466,20 @@ async function sheetAPI(action, payload={}) {
   if(!SHEET_URL) return null;
   try {
     const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
-    const res  = await fetch(SHEET_URL, {
-      method:'POST', body,
-      headers:{'Content-Type':'text/plain'}
+    /* Apps Script requires redirect following — use no-cors fallback if needed */
+    const res = await fetch(SHEET_URL, {
+      method: 'POST',
+      body,
+      headers: {'Content-Type': 'text/plain'},
+      redirect: 'follow'
     });
-    return await res.json();
+    if(!res.ok) {
+      console.warn('Sheet API HTTP error:', res.status);
+      return null;
+    }
+    const text = await res.text();
+    try { return JSON.parse(text); }
+    catch(e) { console.warn('Sheet API non-JSON:', text.slice(0,100)); return null; }
   } catch(e) {
     console.warn('Sheet API error:', e.message);
     return null;
@@ -479,15 +488,19 @@ async function sheetAPI(action, payload={}) {
 
 /* ── Sync: pull everything from Sheets → local cache ── */
 async function syncFromSheet() {
-  if(!SHEET_URL) return;
   showSyncBadge(true);
   try {
     const data = await sheetAPI('getAll');
-    if(data && !data.error){
-      /* Update atomically — only replace if we got real data */
-      if(Array.isArray(data.players))  players = data.players;
-      if(data.preds && typeof data.preds === 'object')   preds   = data.preds;
+    if(data && !data.error) {
+      if(Array.isArray(data.players) && data.players.length >= 0) {
+        players = data.players;
+        try{ localStorage.setItem('prode_players_local', JSON.stringify(players)); }catch(e){}
+      }
+      if(data.preds   && typeof data.preds   === 'object') preds   = data.preds;
       if(data.results && typeof data.results === 'object') results = data.results;
+      console.log('Synced:', players.length, 'players,', Object.keys(preds).length, 'pred sets');
+    } else {
+      console.warn('Sync returned no data or error:', data);
     }
   } catch(e) {
     console.warn('Sync failed:', e.message);
@@ -509,18 +522,22 @@ async function savePredToSheet(pid, fid, ph, pa) {
   await sheetAPI('savePred', {playerId:pid, matchId:fid, ph, pa});
 }
 
-/* Load local backup on startup if Sheet hasn't synced yet */
+/* Load local backup on startup — shows data instantly before Sheet sync */
 function loadLocalBackup(){
   try{
     const local = JSON.parse(localStorage.getItem('prode_preds_local')||'null');
-    if(local && Object.keys(local).length > 0){
-      /* Merge local into preds without overwriting Sheet data */
+    if(local && typeof local === 'object'){
       for(const [pid, matches] of Object.entries(local)){
         if(!preds[pid]) preds[pid] = {};
         for(const [fid, val] of Object.entries(matches)){
-          if(!preds[pid][fid]) preds[pid][fid] = val; /* only fill gaps */
+          if(!preds[pid][fid]) preds[pid][fid] = val;
         }
       }
+    }
+    /* Also restore players list from local cache if Sheet hasn't loaded yet */
+    const localPlayers = JSON.parse(localStorage.getItem('prode_players_local')||'null');
+    if(localPlayers && Array.isArray(localPlayers) && players.length === 0){
+      players = localPlayers;
     }
   }catch(e){}
 }
@@ -995,24 +1012,55 @@ function renderAll(){
   updatePill();
 }
 
-/* URL is hardcoded — show loading state, render only after sync */
+/* URL is hardcoded — show loading, render after sync */
 document.getElementById('grupos-content').innerHTML =
   `<div class="empty" style="padding:40px 20px">
-    <div style="font-size:24px;margin-bottom:10px">⏳</div>
-    Cargando predicciones…
+    <div style="font-size:28px;margin-bottom:10px">⏳</div>
+    <div>Cargando predicciones…</div>
+    <div style="font-size:10px;margin-top:8px;color:var(--muted)">Conectando con el servidor</div>
   </div>`;
 
-syncFromSheet().then(()=>{
-  loadLocalBackup(); /* fill any gaps from local cache */
-  updatePill();
-  fetchESPNResults();
+/* Load local backup immediately so returning users see their data right away */
+loadLocalBackup();
+if(curPlayer && Object.keys(preds).length > 0){
+  /* Has local cache — render instantly, then sync in background */
   restoreSession();
-  renderGrupos(); /* render with full data after sync */
-});
+  renderGrupos();
+  syncFromSheet().then(()=>{
+    loadLocalBackup();
+    updatePill();
+    fetchESPNResults();
+    renderGrupos();
+  });
+} else {
+  /* No local cache — must wait for sync */
+  syncFromSheet().then(()=>{
+    loadLocalBackup();
+    updatePill();
+    fetchESPNResults();
+    restoreSession();
+    renderGrupos();
+  }).catch(()=>{
+    /* Sync failed — render empty with error message */
+    document.getElementById('grupos-content').innerHTML =
+      `<div class="empty" style="padding:40px 20px">
+        <div style="font-size:28px;margin-bottom:10px">⚠️</div>
+        <div>No se pudo conectar</div>
+        <div style="font-size:10px;margin-top:8px;color:var(--muted)">
+          Verificá tu conexión y recargá la página
+        </div>
+        <button onclick="location.reload()" style="margin-top:14px;background:var(--teal);
+          color:#000;border:none;border-radius:4px;padding:8px 20px;
+          font-family:var(--fh);font-size:13px;letter-spacing:.08em;cursor:pointer">
+          Reintentar
+        </button>
+      </div>`;
+  });
+}
+
 setInterval(syncFromSheet, 30000);
 setInterval(fetchESPNResults, 30000);
 setInterval(tickLockCountdowns, 1000);
-
 updatePill();
 
 /* ── Session restore ──
