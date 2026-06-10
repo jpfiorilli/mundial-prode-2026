@@ -148,6 +148,7 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 .sbox-input:focus{border-color:var(--teal);background:rgba(0,201,167,.06)}
 .sbox-input.locked{opacity:.6;cursor:not-allowed;border-color:var(--border)}
 .sbox-input.has-val{border-color:rgba(200,168,75,.4);color:var(--gold2)}
+.sbox-input.invalid{border-color:var(--coral)!important;animation:shake .3s ease}
 .sbox-empty{background:var(--bg3);border:1px solid var(--border);color:var(--muted);opacity:.4}
 .sbox-result{background:rgba(0,201,167,.06);border:1px solid rgba(0,201,167,.3);color:var(--teal)}
 .ssep{font-family:var(--fh);font-size:14px;color:var(--muted)}
@@ -209,7 +210,7 @@ body{background:var(--bg);color:var(--white);font-family:var(--fb);
 .progress-bar{height:3px;background:var(--border);border-radius:2px;margin:4px 0 2px}
 .progress-fill{height:100%;border-radius:2px;background:var(--teal);transition:width .4s ease}
 
-/* ── LOCK COUNTDOWN ── */
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
 @keyframes lockPulse{0%,100%{opacity:1}50%{opacity:.5}}
 .lock-soon{animation:lockPulse 1s ease-in-out infinite}
 
@@ -700,11 +701,11 @@ function renderGrupos(){
             <div class="sbox" style="${hasPred?`background:rgba(200,168,75,.08);border:1px solid rgba(200,168,75,.35);color:var(--gold2)`:`background:var(--bg3);border:1px solid var(--border);color:var(--muted);opacity:.4`}">${hasPred?pp.pa:'–'}</div>
           </div>`
         : `<div class="panel-scores">
-            <input class="sbox-input${hasPred?' has-val':''}" type="number" min="0" max="99"
+            <input class="sbox-input${hasPred?' has-val':''}" type="number" min="0" max="15" inputmode="numeric"
               id="ph-${f.id}" value="${pp.ph!==undefined?pp.ph:''}" placeholder="–"
               oninput="onPredInput(${f.id})"/>
             <span class="ssep">–</span>
-            <input class="sbox-input${hasPred?' has-val':''}" type="number" min="0" max="99"
+            <input class="sbox-input${hasPred?' has-val':''}" type="number" min="0" max="15" inputmode="numeric"
               id="pa-${f.id}" value="${pp.pa!==undefined?pp.pa:''}" placeholder="–"
               oninput="onPredInput(${f.id})"/>
           </div>`;
@@ -830,14 +831,30 @@ function renderTabla(){
    INTERACTIONS
    ═══════════════════════════════════════ */
 function onPredInput(fid){
-  const btn=document.getElementById(`savebtn-${fid}`);
+  const phEl = document.getElementById(`ph-${fid}`);
+  const paEl = document.getElementById(`pa-${fid}`);
+  const btn  = document.getElementById(`savebtn-${fid}`);
+
+  /* Clamp each input to 0–15 */
+  [phEl, paEl].forEach(el=>{
+    if(!el) return;
+    let v = parseInt(el.value);
+    if(el.value === '' || el.value === '-') { el.value=''; return; }
+    if(isNaN(v) || v < 0){
+      el.value = 0;
+      el.classList.add('invalid');
+      setTimeout(()=>el.classList.remove('invalid'), 400);
+    } else if(v > 15){
+      el.value = 15;
+      el.classList.add('invalid');
+      setTimeout(()=>el.classList.remove('invalid'), 400);
+    }
+  });
+
   if(!btn) return;
-  const ph=document.getElementById(`ph-${fid}`)?.value;
-  const pa=document.getElementById(`pa-${fid}`)?.value;
+  const ph = phEl?.value;
+  const pa = paEl?.value;
   btn.disabled = ph===''||pa===''||!curPlayer;
-  if(ph!==''&&pa!==''){
-    btn.classList.remove('disabled');
-  }
 }
 
 async function savePred(fid){
