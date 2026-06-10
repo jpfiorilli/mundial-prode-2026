@@ -435,6 +435,7 @@ const FIXTURES = [
    Set SHEET_URL to your deployed Web App URL
    ═══════════════════════════════════════ */
 const SHEET_URL = 'https://script.google.com/macros/s/AKfycbxNnpwyAYhDXRfIpJxJtibvXijq_rnb-grsrwLkR0AWzhaUI4pC4oev4WLBc-CbPR97VA/exec';
+const SHEET_TOKEN = 'CDh5gAB_KCmUfq8vbHA63pd1FVCYNMW9hI9FwV_vWV4';
 
 /* Local cache — synced from/to Google Sheets */
 let players   = [];
@@ -447,10 +448,10 @@ let syncing   = false;
 async function sheetAPI(action, payload={}) {
   if(!SHEET_URL) return null;
   try {
-    const body = JSON.stringify({action, ...payload});
+    const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
     const res  = await fetch(SHEET_URL, {
       method:'POST', body,
-      headers:{'Content-Type':'text/plain'} // Apps Script needs text/plain for CORS
+      headers:{'Content-Type':'text/plain'}
     });
     return await res.json();
   } catch(e) {

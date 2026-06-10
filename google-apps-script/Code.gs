@@ -21,6 +21,8 @@
  */
 
 const SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
+/* Secret token — must match the one in index.html */
+const SECRET_TOKEN = 'CDh5gAB_KCmUfq8vbHA63pd1FVCYNMW9hI9FwV_vWV4';
 
 function getSheet(name) {
   return SpreadsheetApp.openById(SHEET_ID).getSheetByName(name);
@@ -42,6 +44,14 @@ function doOptions(e) {
 function doPost(e) {
   try {
     const body   = JSON.parse(e.postData.contents);
+
+    /* ── Token check — reject unauthorised requests ── */
+    if(body.token !== SECRET_TOKEN){
+      return setCORS(ContentService
+        .createTextOutput(JSON.stringify({error:'Unauthorised'}))
+        .setMimeType(ContentService.MimeType.JSON));
+    }
+
     const action = body.action;
     let result;
 
