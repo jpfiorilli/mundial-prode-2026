@@ -921,10 +921,10 @@ function onResultInput(fid){ /* disabled */ }
    ═══════════════════════════════════════ */
 function openModal(){
   renderPlayerList();
-  const hasPlayers = players.length>0;
-  document.getElementById('modal-sub').textContent = hasPlayers
-    ? 'Elegí tu perfil o ingresá tu email para reconectarte desde un nuevo dispositivo.'
-    : 'Registrate con tu nombre y email para guardar tus predicciones.';
+  const isLoggedIn = curPlayer && players.find(p=>p.id===curPlayer);
+  document.getElementById('modal-sub').textContent = isLoggedIn
+    ? 'Tu perfil activo. Para cambiar de cuenta ingresá tu email.'
+    : 'Registrate con nombre y email, o ingresá tu email para reconectarte.';
   document.getElementById('modal-cancel').style.display=curPlayer?'':'none';
   document.getElementById('modal-overlay').classList.add('show');
   document.getElementById('new-player-name').value='';
@@ -937,24 +937,29 @@ function handleOverlayClick(e){if(e.target.id==='modal-overlay'&&curPlayer) clos
 
 function renderPlayerList(){
   const el=document.getElementById('player-list');
-  if(!players.length){
-    el.innerHTML='';
-    return;
-  }
-  el.innerHTML=players.map(p=>{
-    const {total}=playerTotal(p.id);
-    // Mask email for privacy: show first 2 chars + *** + @domain
-    const emailMask = p.email
-      ? p.email.replace(/^(.{2})(.*)(@.*)$/,(_,a,b,c)=>a+'***'+c)
-      : '';
-    return `<div class="player-item${p.id===curPlayer?' active':''}" onclick="selectPlayer('${p.id}')">
-      <div>
-        <div class="player-item-name">${p.name}</div>
-        <div style="font-size:10px;color:var(--muted);margin-top:1px">${emailMask}</div>
+  /* Only show the current user's own profile — never let someone select another account */
+  if(curPlayer){
+    const me = players.find(p=>p.id===curPlayer);
+    if(me){
+      const {total} = playerTotal(me.id);
+      const emailMask = me.email
+        ? me.email.replace(/^(.{2})(.*)(@.*)$/,(_,a,b,c)=>a+'***'+c)
+        : '';
+      el.innerHTML=`<div class="player-item active" style="cursor:default">
+        <div>
+          <div class="player-item-name">👤 ${me.name}</div>
+          <div style="font-size:10px;color:var(--muted);margin-top:1px">${emailMask}</div>
+        </div>
+        <span class="player-item-pts">${total} pts</span>
       </div>
-      <span class="player-item-pts">${total} pts</span>
-    </div>`;
-  }).join('');
+      <div style="font-size:11px;color:var(--muted);padding:6px 2px;line-height:1.5">
+        ¿No sos vos? Ingresá tu email abajo para reconectarte.
+      </div>`;
+      return;
+    }
+  }
+  /* No session — clean slate */
+  el.innerHTML='';
 }
 
 function selectPlayer(pid){
