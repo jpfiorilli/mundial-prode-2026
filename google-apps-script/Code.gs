@@ -1,28 +1,143 @@
 /**
  * PRODE MUNDIAL 2026 — Google Apps Script Backend
- * ─────────────────────────────────────────────────
- * HOW TO SET UP (5 minutes):
- *
- * 1. Go to https://sheets.new — create a new Google Sheet
- * 2. Name it "Prode Mundial 2026"
- * 3. Create 3 tabs (sheets) named exactly:
- *      players   |   predictions   |   results
- *
- * 4. In the sheet, go to Extensions → Apps Script
- * 5. Delete all existing code, paste this entire file
- * 6. Save (Ctrl+S), then click Deploy → New deployment
- * 7. Type: Web App
- *    Execute as: Me
- *    Who has access: Anyone
- * 8. Click Deploy → Copy the Web App URL
- * 9. Open the prode app → paste the URL when prompted
- *
- * That's it! All predictions and results sync automatically.
  */
 
 const SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
-/* Secret token — must match the one in index.html */
 const SECRET_TOKEN = 'CDh5gAB_KCmUfq8vbHA63pd1FVCYNMW9hI9FwV_vWV4';
+
+function getSheet(name) {
+  return SpreadsheetApp.openById(SHEET_ID).getSheetByName(name);
+}
+
+/* ── CORS output helper ── */
+function jsonOut(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/* ── GET handler — browsers send preflight as GET ── */
+function doGet(e) {
+  try {
+    const action = e.parameter.action;
+    const token  = e.parameter.token;
+    if(token !== SECRET_TOKEN) return jsonOut({error:'Unauthorised'});
+    if(action === 'getAll') return jsonOut(getAll());
+    return jsonOut({error:'Unknown action'});
+  } catch(err) {
+    return jsonOut({error: err.message});
+  }
+}
+
+/* ── POST handler ── */
+function doPost(e) {
+  try {
+    const body  = JSON.parse(e.postData.contents);
+    if(body.token !== SECRET_TOKEN) return jsonOut({error:'Unauthorised'});
+
+    const action = body.action;
+    if      (action === 'getAll')      return jsonOut(getAll());
+    else if (action === 'savePlayer')  return jsonOut(savePlayer(body.player));
+    else if (action === 'savePred')    return jsonOut(savePred(body.playerId, body.matchId, body.ph, body.pa));
+    else if (action === 'saveResult')  return jsonOut(saveResult(body.matchId, body.rh, body.ra));
+    else return jsonOut({error: 'Unknown action: ' + action});
+  } catch(err) {
+    return jsonOut({error: err.message});
+  }
+}
+
+/* ── GET ALL ── */
+function getAll() {
+  return {
+    players: getPlayers(),
+    preds:   getPredictions(),
+    results: getResults()
+  };
+}
+
+/* ── PLAYERS ── */
+function getPlayers() {
+  const sheet = getSheet('players');
+  const rows  = sheet.getDataRange().getValues();
+  if (rows.length <= 1) return [];
+  return rows.slice(1)
+    .filter(r => r[0] && String(r[0]) !== 'id')
+    .map(r => ({id: String(r[0]), name: String(r[1]), email: String(r[2])}));
+}
+
+function savePlayer(player) {
+  const sheet = getSheet('players');
+  if (sheet.getLastRow() === 0)
+    sheet.appendRow(['id','name','email','created_at']);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === player.id || rows[i][2] === player.email)
+      return {ok: true, existing: true};
+  }
+  sheet.appendRow([player.id, player.name, player.email, new Date().toISOString()]);
+  return {ok: true};
+}
+
+/* ── PREDICTIONS ── */
+function getPredictions() {
+  const sheet = getSheet('predictions');
+  const rows  = sheet.getDataRange().getValues();
+  if (rows.length <= 1) return {};
+  const out = {};
+  rows.slice(1).forEach(r => {
+    const playerId = String(r[0]);
+    const matchId  = String(r[1]);
+    if (!playerId || playerId === 'player_id') return;
+    if (!out[playerId]) out[playerId] = {};
+    out[playerId][matchId] = {ph: +r[2], pa: +r[3]};
+  });
+  return out;
+}
+
+function savePred(playerId, matchId, ph, pa) {
+  const sheet = getSheet('predictions');
+  if (sheet.getLastRow() === 0)
+    sheet.appendRow(['player_id','match_id','pred_home','pred_away','saved_at']);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(playerId) && String(rows[i][1]) === String(matchId)) {
+      sheet.getRange(i+1, 3, 1, 3).setValues([[ph, pa, new Date().toISOString()]]);
+      return {ok: true, updated: true};
+    }
+  }
+  sheet.appendRow([playerId, matchId, ph, pa, new Date().toISOString()]);
+  return {ok: true};
+}
+
+/* ── RESULTS ── */
+function getResults() {
+  const sheet = getSheet('results');
+  const rows  = sheet.getDataRange().getValues();
+  if (rows.length <= 1) return {};
+  const out = {};
+  rows.slice(1).forEach(r => {
+    const matchId = String(r[0]);
+    if (!matchId || matchId === 'match_id') return;
+    out[matchId] = {rh: +r[1], ra: +r[2]};
+  });
+  return out;
+}
+
+function saveResult(matchId, rh, ra) {
+  const sheet = getSheet('results');
+  if (sheet.getLastRow() === 0)
+    sheet.appendRow(['match_id','result_home','result_away','saved_at']);
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (String(rows[i][0]) === String(matchId)) {
+      sheet.getRange(i+1, 2, 1, 3).setValues([[rh, ra, new Date().toISOString()]]);
+      return {ok: true, updated: true};
+    }
+  }
+  sheet.appendRow([matchId, rh, ra, new Date().toISOString()]);
+  return {ok: true};
+}
+
 
 function getSheet(name) {
   return SpreadsheetApp.openById(SHEET_ID).getSheetByName(name);

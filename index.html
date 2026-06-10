@@ -465,21 +465,24 @@ let syncing   = false;
 async function sheetAPI(action, payload={}) {
   if(!SHEET_URL) return null;
   try {
-    const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
-    /* Apps Script requires redirect following — use no-cors fallback if needed */
-    const res = await fetch(SHEET_URL, {
-      method: 'POST',
-      body,
-      headers: {'Content-Type': 'text/plain'},
-      redirect: 'follow'
-    });
-    if(!res.ok) {
-      console.warn('Sheet API HTTP error:', res.status);
-      return null;
+    /* Use GET for reads (no CORS preflight), POST for writes */
+    const isRead = action === 'getAll';
+    let res;
+    if(isRead){
+      const url = `${SHEET_URL}?action=${action}&token=${encodeURIComponent(SHEET_TOKEN)}`;
+      res = await fetch(url, {method:'GET', redirect:'follow'});
+    } else {
+      const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
+      res = await fetch(SHEET_URL, {
+        method:'POST', body,
+        headers:{'Content-Type':'text/plain'},
+        redirect:'follow'
+      });
     }
+    if(!res.ok){ console.warn('Sheet API HTTP:', res.status); return null; }
     const text = await res.text();
-    try { return JSON.parse(text); }
-    catch(e) { console.warn('Sheet API non-JSON:', text.slice(0,100)); return null; }
+    try{ return JSON.parse(text); }
+    catch(e){ console.warn('Sheet non-JSON:', text.slice(0,100)); return null; }
   } catch(e) {
     console.warn('Sheet API error:', e.message);
     return null;
