@@ -461,55 +461,54 @@ let results   = {};   // {matchId: {rh,ra}}
 let curPlayer = localStorage.getItem('prode_current') || null;
 let syncing   = false;
 
+/* ── Google Apps Script bridge via iframe postMessage ──
+   JSONP blocked by nosniff, fetch blocked by CORS.
+   iframe postMessage is the only reliable cross-origin
+   approach with Apps Script on modern browsers.
+── */
+let _bridge = null;
+let _pending = {};
+
+function getBridge() {
+  if(_bridge) return _bridge;
+  const iframe = document.createElement('iframe');
+  iframe.src = SHEET_URL + '?bridge=1&token=' + encodeURIComponent(SHEET_TOKEN);
+  iframe.style.cssText = 'display:none;width:0;height:0;border:0;position:absolute;top:-9999px';
+  iframe.id = 'sheet-bridge';
+  document.body.appendChild(iframe);
+  _bridge = iframe;
+
+  window.addEventListener('message', function(e){
+    if(!e.data || !e.data.reqId) return;
+    const cb = _pending[e.data.reqId];
+    if(cb){ delete _pending[e.data.reqId]; cb(e.data.result); }
+  });
+  return iframe;
+}
+
+function sheetCall(action, payload={}) {
+  return new Promise((resolve) => {
+    const reqId = 'r' + Date.now() + Math.random();
+    _pending[reqId] = resolve;
+    setTimeout(()=>{ if(_pending[reqId]){ delete _pending[reqId]; resolve(null); } }, 12000);
+    try {
+      getBridge().contentWindow.postMessage(
+        {reqId, action, token: SHEET_TOKEN, ...payload}, '*'
+      );
+    } catch(e) { delete _pending[reqId]; resolve(null); }
+  });
+}
+
 /* ── Low-level API call ── */
 async function sheetAPI(action, payload={}) {
   if(!SHEET_URL) return null;
   try {
-    if(action === 'getAll'){
-      /* JSONP approach — bypasses CORS entirely */
-      return await fetchViaJSONP();
-    } else {
-      /* Writes: no-cors POST — fire and forget (response opaque but request goes through) */
-      const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
-      fetch(SHEET_URL, {
-        method:'POST', body,
-        headers:{'Content-Type':'text/plain'},
-        mode:'no-cors'
-      }).catch(()=>{});
-      return {ok:true};
-    }
+    const result = await sheetCall(action, payload);
+    return result;
   } catch(e) {
     console.warn('Sheet API error:', e.message);
     return null;
   }
-}
-
-/* JSONP loader — Apps Script supports ?callback= param */
-function fetchViaJSONP() {
-  return new Promise((resolve, reject) => {
-    const cbName = 'prode_cb_' + Date.now();
-    const script = document.createElement('script');
-    const timer = setTimeout(()=>{
-      cleanup();
-      reject(new Error('JSONP timeout'));
-    }, 10000);
-
-    window[cbName] = function(data){
-      cleanup();
-      resolve(data);
-    };
-
-    function cleanup(){
-      clearTimeout(timer);
-      delete window[cbName];
-      if(script.parentNode) script.parentNode.removeChild(script);
-    }
-
-    const url = `${SHEET_URL}?action=getAll&token=${encodeURIComponent(SHEET_TOKEN)}&callback=${cbName}`;
-    script.src = url;
-    script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script error')); };
-    document.head.appendChild(script);
-  });
 }
 
 /* ── Sync: pull everything from Sheets → local cache ── */

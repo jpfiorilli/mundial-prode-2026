@@ -16,40 +16,46 @@ function jsonOut(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ── GET handler — supports JSONP via ?callback= param ── */
+/* ── GET handler — serves iframe bridge page ── */
 function doGet(e) {
-  try {
-    const action   = e.parameter.action;
-    const token    = e.parameter.token;
-    const callback = e.parameter.callback;  // JSONP callback name
+  const bridge = e.parameter.bridge;
+  const token  = e.parameter.token;
 
-    if(token !== SECRET_TOKEN) {
-      const out = JSON.stringify({error:'Unauthorised'});
-      return ContentService.createTextOutput(
-        callback ? `${callback}(${out})` : out
-      ).setMimeType(callback
-        ? ContentService.MimeType.JAVASCRIPT
-        : ContentService.MimeType.JSON);
-    }
+  /* Serve the bridge iframe page */
+  if(bridge === '1') {
+    const scriptToken = SECRET_TOKEN;
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"></head>
+<body>
+<script>
+const SECRET = '${scriptToken}';
+window.addEventListener('message', function(e) {
+  var d = e.data;
+  if(!d || d.token !== SECRET) return;
+  var reqId = d.reqId;
+  var action = d.action;
 
-    let data = {};
-    if(action === 'getAll') data = getAll();
-    else data = {error: 'Unknown action'};
-
-    const out = JSON.stringify(data);
-    return ContentService.createTextOutput(
-      callback ? `${callback}(${out})` : out
-    ).setMimeType(callback
-      ? ContentService.MimeType.JAVASCRIPT
-      : ContentService.MimeType.JSON);
-
-  } catch(err) {
-    const out = JSON.stringify({error: err.message});
-    const callback = e.parameter ? e.parameter.callback : null;
-    return ContentService.createTextOutput(
-      callback ? `${callback}(${out})` : out
-    ).setMimeType(ContentService.MimeType.JSON);
+  function reply(result) {
+    e.source.postMessage({reqId: reqId, result: result}, '*');
   }
+
+  var url = '${SHEET_URL}';
+  fetch(url, {
+    method: 'POST',
+    body: JSON.stringify(d),
+    headers: {'Content-Type': 'text/plain'}
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){ reply(data); })
+  .catch(function(err){ reply({error: err.message}); });
+});
+<\/script>
+</body></html>`;
+    return HtmlService.createHtmlOutput(html)
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  return HtmlService.createHtmlOutput('<p>Prode 2026 API</p>');
 }
 
 /* ── POST handler ── */
