@@ -84,12 +84,14 @@ function getAll() {
 function getPlayers() {
   const sheet = getSheet('players');
   const rows  = sheet.getDataRange().getValues();
-  if (rows.length <= 1) return [];         // only header or empty
-  return rows.slice(1).map(r => ({
-    id:    r[0], 
-    name:  r[1], 
-    email: r[2],
-  })).filter(p => p.id);
+  if (rows.length <= 1) return [];
+  return rows.slice(1)
+    .filter(r => r[0] && String(r[0]) !== 'id')
+    .map(r => ({
+      id:    String(r[0]),
+      name:  String(r[1]),
+      email: String(r[2]),
+    }));
 }
 
 function savePlayer(player) {
@@ -116,8 +118,10 @@ function getPredictions() {
   if (rows.length <= 1) return {};
   const out = {};
   rows.slice(1).forEach(r => {
-    const [playerId, matchId, ph, pa] = r;
-    if (!playerId) return;
+    const playerId = String(r[0]);
+    const matchId  = String(r[1]);   // force string key — JS object keys are always strings
+    const ph = r[2], pa = r[3];
+    if (!playerId || playerId === 'player_id') return;
     if (!out[playerId]) out[playerId] = {};
     out[playerId][matchId] = {ph: +ph, pa: +pa};
   });
@@ -148,8 +152,9 @@ function getResults() {
   if (rows.length <= 1) return {};
   const out = {};
   rows.slice(1).forEach(r => {
-    const [matchId, rh, ra] = r;
-    if (matchId) out[matchId] = {rh: +rh, ra: +ra};
+    const matchId = String(r[0]);
+    if (!matchId || matchId === 'match_id') return;
+    out[matchId] = {rh: +r[1], ra: +r[2]};
   });
   return out;
 }

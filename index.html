@@ -663,10 +663,11 @@ function renderGrupos(){
     h+=`<div class="group-block">
       <div class="group-title">${g.name} <span>${done}/${gfixes.length} resultados</span></div>`;
     gfixes.forEach(f=>{
-      const locked  = isLocked(f.utc);   // 2h before kick-off
+      const fid     = String(f.id);  // Sheet keys are always strings
+      const locked  = isLocked(f.utc);
       const past    = isPast(f.utc);
-      const r       = results[f.id]||{};
-      const pp      = curPlayer?(preds[curPlayer]||{})[f.id]||{}:{};
+      const r       = results[fid]||{};
+      const pp      = curPlayer?(preds[curPlayer]||{})[fid]||{}:{};
       const pts     = curPlayer&&r.rh!==undefined?calcPts(pp.ph,pp.pa,r.rh,r.ra):null;
       const hasResult = r.rh!==undefined&&r.ra!==undefined;
       const hasPred   = pp.ph!==undefined&&pp.pa!==undefined;
@@ -859,12 +860,13 @@ function onPredInput(fid){
 
 async function savePred(fid){
   if(!curPlayer) return openModal();
+  const sfid = String(fid);
   const ph=document.getElementById(`ph-${fid}`)?.value;
   const pa=document.getElementById(`pa-${fid}`)?.value;
   if(ph===''||pa==='') return;
   const btn=document.getElementById(`savebtn-${fid}`);
   if(btn){btn.textContent='...';btn.disabled=true;}
-  await savePredToSheet(curPlayer, fid, +ph, +pa);
+  await savePredToSheet(curPlayer, sfid, +ph, +pa);
   updatePill();
   renderGrupos();
 }
