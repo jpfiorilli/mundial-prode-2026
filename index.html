@@ -480,13 +480,18 @@ async function sheetAPI(action, payload={}) {
 async function syncFromSheet() {
   if(!SHEET_URL) return;
   showSyncBadge(true);
-  const data = await sheetAPI('getAll');
-  if(!data) { showSyncBadge(false); return; }
-  if(data.players)  players = data.players;
-  if(data.preds)    preds   = data.preds;
-  if(data.results)  results = data.results;
+  try {
+    const data = await sheetAPI('getAll');
+    if(data && !data.error){
+      /* Update atomically — only replace if we got real data */
+      if(Array.isArray(data.players))  players = data.players;
+      if(data.preds && typeof data.preds === 'object')   preds   = data.preds;
+      if(data.results && typeof data.results === 'object') results = data.results;
+    }
+  } catch(e) {
+    console.warn('Sync failed:', e.message);
+  }
   showSyncBadge(false);
-  renderAll();
 }
 
 /* ── Write helpers ── */
@@ -498,7 +503,25 @@ async function savePlayer(p) {
 async function savePredToSheet(pid, fid, ph, pa) {
   if(!preds[pid]) preds[pid]={};
   preds[pid][fid]={ph,pa};
+  /* Local backup — safety net if Sheet is slow */
+  try{ localStorage.setItem('prode_preds_local', JSON.stringify(preds)); }catch(e){}
   await sheetAPI('savePred', {playerId:pid, matchId:fid, ph, pa});
+}
+
+/* Load local backup on startup if Sheet hasn't synced yet */
+function loadLocalBackup(){
+  try{
+    const local = JSON.parse(localStorage.getItem('prode_preds_local')||'null');
+    if(local && Object.keys(local).length > 0){
+      /* Merge local into preds without overwriting Sheet data */
+      for(const [pid, matches] of Object.entries(local)){
+        if(!preds[pid]) preds[pid] = {};
+        for(const [fid, val] of Object.entries(matches)){
+          if(!preds[pid][fid]) preds[pid][fid] = val; /* only fill gaps */
+        }
+      }
+    }
+  }catch(e){}
 }
 async function saveResultToSheet(fid, rh, ra) {
   results[fid]={rh,ra};
@@ -953,18 +976,25 @@ function renderAll(){
   updatePill();
 }
 
-/* URL is hardcoded — always sync on load */
+/* URL is hardcoded — show loading state, render only after sync */
+document.getElementById('grupos-content').innerHTML =
+  `<div class="empty" style="padding:40px 20px">
+    <div style="font-size:24px;margin-bottom:10px">⏳</div>
+    Cargando predicciones…
+  </div>`;
+
 syncFromSheet().then(()=>{
+  loadLocalBackup(); /* fill any gaps from local cache */
   updatePill();
   fetchESPNResults();
   restoreSession();
+  renderGrupos(); /* render with full data after sync */
 });
 setInterval(syncFromSheet, 30000);
 setInterval(fetchESPNResults, 30000);
 setInterval(tickLockCountdowns, 1000);
 
 updatePill();
-renderGrupos();
 
 /* ── Session restore ──
    Same device: curPlayer ID is in localStorage → match against loaded players list
