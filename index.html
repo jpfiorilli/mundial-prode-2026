@@ -465,28 +465,51 @@ let syncing   = false;
 async function sheetAPI(action, payload={}) {
   if(!SHEET_URL) return null;
   try {
-    /* Use GET for reads (no CORS preflight), POST for writes */
-    const isRead = action === 'getAll';
-    let res;
-    if(isRead){
-      const url = `${SHEET_URL}?action=${action}&token=${encodeURIComponent(SHEET_TOKEN)}`;
-      res = await fetch(url, {method:'GET', redirect:'follow'});
+    if(action === 'getAll'){
+      /* JSONP approach — bypasses CORS entirely */
+      return await fetchViaJSONP();
     } else {
+      /* Writes: no-cors POST — fire and forget (response opaque but request goes through) */
       const body = JSON.stringify({action, token: SHEET_TOKEN, ...payload});
-      res = await fetch(SHEET_URL, {
+      fetch(SHEET_URL, {
         method:'POST', body,
         headers:{'Content-Type':'text/plain'},
-        redirect:'follow'
-      });
+        mode:'no-cors'
+      }).catch(()=>{});
+      return {ok:true};
     }
-    if(!res.ok){ console.warn('Sheet API HTTP:', res.status); return null; }
-    const text = await res.text();
-    try{ return JSON.parse(text); }
-    catch(e){ console.warn('Sheet non-JSON:', text.slice(0,100)); return null; }
   } catch(e) {
     console.warn('Sheet API error:', e.message);
     return null;
   }
+}
+
+/* JSONP loader — Apps Script supports ?callback= param */
+function fetchViaJSONP() {
+  return new Promise((resolve, reject) => {
+    const cbName = 'prode_cb_' + Date.now();
+    const script = document.createElement('script');
+    const timer = setTimeout(()=>{
+      cleanup();
+      reject(new Error('JSONP timeout'));
+    }, 10000);
+
+    window[cbName] = function(data){
+      cleanup();
+      resolve(data);
+    };
+
+    function cleanup(){
+      clearTimeout(timer);
+      delete window[cbName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+    }
+
+    const url = `${SHEET_URL}?action=getAll&token=${encodeURIComponent(SHEET_TOKEN)}&callback=${cbName}`;
+    script.src = url;
+    script.onerror = ()=>{ cleanup(); reject(new Error('JSONP script error')); };
+    document.head.appendChild(script);
+  });
 }
 
 /* ── Sync: pull everything from Sheets → local cache ── */

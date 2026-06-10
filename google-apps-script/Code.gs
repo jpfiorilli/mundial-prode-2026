@@ -16,16 +16,39 @@ function jsonOut(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ── GET handler — browsers send preflight as GET ── */
+/* ── GET handler — supports JSONP via ?callback= param ── */
 function doGet(e) {
   try {
-    const action = e.parameter.action;
-    const token  = e.parameter.token;
-    if(token !== SECRET_TOKEN) return jsonOut({error:'Unauthorised'});
-    if(action === 'getAll') return jsonOut(getAll());
-    return jsonOut({error:'Unknown action'});
+    const action   = e.parameter.action;
+    const token    = e.parameter.token;
+    const callback = e.parameter.callback;  // JSONP callback name
+
+    if(token !== SECRET_TOKEN) {
+      const out = JSON.stringify({error:'Unauthorised'});
+      return ContentService.createTextOutput(
+        callback ? `${callback}(${out})` : out
+      ).setMimeType(callback
+        ? ContentService.MimeType.JAVASCRIPT
+        : ContentService.MimeType.JSON);
+    }
+
+    let data = {};
+    if(action === 'getAll') data = getAll();
+    else data = {error: 'Unknown action'};
+
+    const out = JSON.stringify(data);
+    return ContentService.createTextOutput(
+      callback ? `${callback}(${out})` : out
+    ).setMimeType(callback
+      ? ContentService.MimeType.JAVASCRIPT
+      : ContentService.MimeType.JSON);
+
   } catch(err) {
-    return jsonOut({error: err.message});
+    const out = JSON.stringify({error: err.message});
+    const callback = e.parameter ? e.parameter.callback : null;
+    return ContentService.createTextOutput(
+      callback ? `${callback}(${out})` : out
+    ).setMimeType(ContentService.MimeType.JSON);
   }
 }
 
