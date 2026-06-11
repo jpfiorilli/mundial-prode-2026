@@ -16,12 +16,14 @@ function jsonOut(data) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-/* ── GET handler — serves iframe bridge page ── */
+/* ── GET handler — supports JSONP + getScores proxy ── */
 function doGet(e) {
-  const bridge = e.parameter.bridge;
-  const token  = e.parameter.token;
+  const bridge    = e.parameter.bridge;
+  const token     = e.parameter.token;
+  const action    = e.parameter.action;
+  const callback  = e.parameter.callback;
 
-  /* Serve the bridge iframe page */
+  /* Serve iframe bridge page */
   if(bridge === '1') {
     const scriptToken = SECRET_TOKEN;
     const html = `<!DOCTYPE html>
@@ -34,11 +36,9 @@ window.addEventListener('message', function(e) {
   if(!d || d.token !== SECRET) return;
   var reqId = d.reqId;
   var action = d.action;
-
   function reply(result) {
     e.source.postMessage({reqId: reqId, result: result}, '*');
   }
-
   var url = '${SHEET_URL}';
   fetch(url, {
     method: 'POST',
@@ -53,6 +53,30 @@ window.addEventListener('message', function(e) {
 </body></html>`;
     return HtmlService.createHtmlOutput(html)
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  /* Proxy football-data.org scores (CORS workaround) */
+  if(action === 'getScores' && token === SECRET_TOKEN) {
+    try {
+      const date = e.parameter.date || Utilities.formatDate(new Date(), 'UTC', 'yyyy-MM-dd');
+      const fdUrl = `https://api.football-data.org/v4/competitions/WC/matches?dateFrom=${date}&dateTo=${date}`;
+      const resp = UrlFetchApp.fetch(fdUrl, {
+        headers: { 'X-Auth-Token': '98a4e20e82db481882a8bbe75057beaf' },
+        muteHttpExceptions: true
+      });
+      const data = JSON.parse(resp.getContentText());
+      const out  = JSON.stringify({matches: data.matches || []});
+      return ContentService.createTextOutput(
+        callback ? `${callback}(${out})` : out
+      ).setMimeType(callback
+        ? ContentService.MimeType.JAVASCRIPT
+        : ContentService.MimeType.JSON);
+    } catch(err) {
+      const out = JSON.stringify({matches:[], error: err.message});
+      return ContentService.createTextOutput(
+        callback ? `${callback}(${out})` : out
+      ).setMimeType(ContentService.MimeType.JSON);
+    }
   }
 
   return HtmlService.createHtmlOutput('<p>Prode 2026 API</p>');
