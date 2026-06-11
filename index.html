@@ -659,7 +659,11 @@ async function fetchESPNResults(){
   const tournEnd   = new Date('2026-07-20T23:59:00Z');
   if(now < tournStart || now > tournEnd) return;
   try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard`;
+    const urls = [
+      `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard`,
+      `https://site.api.espn.com/apis/v2/scoreboard/header?sport=soccer&league=fifa.world`
+    ];
+    for(const url of urls){
     const res = await fetch(url);
     if(!res.ok) return;
     const json = await res.json();
